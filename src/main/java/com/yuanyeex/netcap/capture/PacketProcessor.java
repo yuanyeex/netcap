@@ -1,6 +1,7 @@
 package com.yuanyeex.netcap.capture;
 
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import com.yuanyeex.netcap.capture.handler.DnsPacketHandler;
 import org.pcap4j.packet.DnsPacket;
 import org.pcap4j.packet.DnsQuestion;
 import org.pcap4j.packet.Packet;
@@ -28,6 +29,8 @@ public class PacketProcessor {
     private final int processorCount;
     private final  ExecutorService executorService;
 
+    private DnsPacketHandler dnsPacketHandler;
+
     private PacketProcessor(int queueLength, boolean dropWhenQueueFull) {
         this.packetsQueue = new LinkedBlockingQueue<>(queueLength);
         this.dropWhenQueueFull = dropWhenQueueFull;
@@ -40,11 +43,11 @@ public class PacketProcessor {
         return Math.min(8, Runtime.getRuntime().availableProcessors());
     }
 
-    private void start() {
+    private void start(DnsPacketHandler dnsPacketHandler) {
         System.out.println("start " + processorCount + " process tasks");
         logger.info("start with {} processor tasks", processorCount);
         for (int i = 0; i < processorCount; i++) {
-            executorService.submit(new PacketConsumer(packetsQueue, i));
+            executorService.submit(new PacketConsumer(packetsQueue, i, dnsPacketHandler));
         }
     }
 
@@ -68,14 +71,13 @@ public class PacketProcessor {
         private static final AtomicLong procIdx = new AtomicLong(0);
         private final LinkedBlockingQueue<Packet> consumingQueue;
         private final int consumerId;
+        private final DnsPacketHandler dnsPacketHandler;
 
-        private static long getProcIdx() {
-            return procIdx.getAndIncrement();
-        }
-
-        private PacketConsumer(LinkedBlockingQueue<Packet> consumingQueue, int consumerId) {
+        private PacketConsumer(LinkedBlockingQueue<Packet> consumingQueue, int consumerId, DnsPacketHandler dnsPacketHandler) {
             this.consumingQueue = consumingQueue;
             this.consumerId = consumerId;
+
+            this.dnsPacketHandler = dnsPacketHandler;
         }
 
         @Override
@@ -95,19 +97,10 @@ public class PacketProcessor {
             Packet take = consumingQueue.take();
             DnsPacket dnsPacket = getDnsPacket(take, new AtomicLong(0));
             if (dnsPacket != null) {
-                long procIdx = getProcIdx();
                 DnsPacket.DnsHeader header = dnsPacket.getHeader();
                 if (!header.isResponse()) {
                     // 只统计请求
-                    StringBuilder sb = new StringBuilder();
-                    sb.append("Consumer ").append(consumerId).append(" consumes ").append(procIdx)
-                            .append(" with ").append(header.getQdCount());
-                    List<DnsQuestion> questions = header.getQuestions();
-                    for (DnsQuestion question : questions) {
-                        sb.append(" ").append(question.getQName());
-                    }
-
-                    System.out.println(sb.toString());
+                    dnsPacketHandler.handle(dnsPacket);
                 }
             }
         }
@@ -137,9 +130,9 @@ public class PacketProcessor {
 
 
     // init and start
-    public static void startProcessor() {
+    public static void startProcessor(DnsPacketHandler dnsPacketHandler) {
         logger.info("Start processor!");
-        PacketProcessor.INSTANCE.start();
+        PacketProcessor.INSTANCE.start(dnsPacketHandler);
     }
 
     public static void submitPacket(Packet packet) throws InterruptedException {

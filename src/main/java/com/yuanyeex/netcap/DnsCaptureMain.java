@@ -1,8 +1,16 @@
 package com.yuanyeex.netcap;
 
+import com.google.common.base.Preconditions;
 import com.yuanyeex.netcap.capture.PacketProcessor;
 import com.yuanyeex.netcap.capture.PcapHandleCapture;
+import com.yuanyeex.netcap.capture.handler.ConsoleLogDnsPacketHandler;
+import com.yuanyeex.netcap.capture.handler.DnsPacketHandler;
+import com.yuanyeex.netcap.capture.handler.KafkaDnsPacketHandler;
+import com.yuanyeex.netcap.config.PropertyKey;
 import org.apache.commons.cli.*;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.Producer;
 import org.pcap4j.core.NotOpenException;
 import org.pcap4j.core.PcapNativeException;
 import org.slf4j.Logger;
@@ -13,7 +21,10 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Arrays;
 import java.util.Properties;
+
+import static com.yuanyeex.netcap.config.PropertyKey.KAFKAKey.*;
 
 /**
  * Dns Capture and send to kafka stream bootstrap class.
@@ -25,12 +36,53 @@ public class DnsCaptureMain {
     public static void main(String[] args) {
         logger.info("Start!");
         Properties properties = parseArgs(args);
+        Preconditions.checkNotNull(properties, "properties cannot be loaded - " + Arrays.toString(args));
         try {
-            PacketProcessor.startProcessor();
+            DnsPacketHandler dnsPacketHandler = getDnsPacketHandler(properties);
+            PacketProcessor.startProcessor(dnsPacketHandler);
             PcapHandleCapture.startCapture(properties);
         } catch (PcapNativeException | NotOpenException e) {
             e.printStackTrace();
         }
+    }
+
+    private static DnsPacketHandler getDnsPacketHandler(Properties properties) {
+
+        String enableKafka = properties.getProperty(PropertyKey.KAFKAKey.kafkaEnabled.getKey());
+        if (!StringUtils.equals("true", enableKafka)) {
+            return ConsoleLogDnsPacketHandler.INSTANCE;
+        }
+
+        String topic = properties.getProperty(kafkaTopic.getKey());
+        Preconditions.checkArgument(StringUtils.isNotBlank(topic), "kafka topic missing");
+
+        String bootstrapservers = properties.getProperty(kafkaBootstrapServers.getKey());
+        Preconditions.checkArgument(StringUtils.isNotBlank(bootstrapservers), "kafka bootstrap servers missing!");
+
+        String acks = properties.getProperty(kafkaAcks.getKey(), kafkaAcks.getDefaultValue());
+        String retries = properties.getProperty(kafkaRetries.getKey(), kafkaRetries.getDefaultValue());
+        String lingerMs = properties.getProperty(kafkaLingerMs.getKey(), kafkaLingerMs.getDefaultValue());
+        String keySerializer = properties.getProperty(kafkaKeySerializer.getKey());
+        Preconditions.checkArgument(StringUtils.isNotBlank(keySerializer), "kafka key serializer missing!");
+        String valueSerializer = properties.getProperty(kafkaValueSerializer.getKey());
+        Preconditions.checkArgument(StringUtils.isNotBlank(valueSerializer), "kafka value serializer missing!");
+
+        Properties kafkaProperties = new Properties();
+        kafkaProperties.put("bootstrap.servers", bootstrapservers);
+        kafkaProperties.put("acks", acks);
+        kafkaProperties.put("retries", Integer.parseInt(retries));
+        kafkaProperties.put("linger.ms", Integer.parseInt(lingerMs));
+        kafkaProperties.put("key.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+        kafkaProperties.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+
+
+        Producer<String, String> producer = new KafkaProducer<String, String>(kafkaProperties);
+
+        KafkaDnsPacketHandler kafkaDnsPacketHandler = new KafkaDnsPacketHandler();
+        kafkaDnsPacketHandler.setProducer(producer);
+        kafkaDnsPacketHandler.setTopic(topic);
+
+        return kafkaDnsPacketHandler;
     }
 
     private static Properties parseArgs(String[] args) {

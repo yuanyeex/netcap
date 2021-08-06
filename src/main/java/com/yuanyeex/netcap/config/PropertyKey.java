@@ -67,5 +67,33 @@ public interface PropertyKey {
         }
     }
 
+    enum KAFKAKey implements PropertyKey {
+        kafkaEnabled("kafka.enabled", "false"),
+        kafkaTopic("kafka.topic", ""),
+        kafkaBootstrapServers("kafka.bootstrap.servers", ""),
+        kafkaAcks("kafka.acks", "all"),
+        kafkaRetries("kafka.retries", "0"),
+        kafkaLingerMs("kafka.linger.ms", "1"),
+        kafkaKeySerializer("kafka.key.serializer", ""),
+        kafkaValueSerializer("kafka.value.serializer", "");
 
+        private final String key;
+        private final String defaultValuel;
+
+        KAFKAKey(String key, String defaultValuel) {
+            this.key = key;
+            this.defaultValuel = defaultValuel;
+        }
+
+
+        @Override
+        public String getKey() {
+            return this.key;
+        }
+
+        @Override
+        public String getDefaultValue() {
+            return this.defaultValuel;
+        }
+    }
 }
